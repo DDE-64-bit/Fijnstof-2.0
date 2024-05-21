@@ -1,8 +1,7 @@
 import requests
 import matplotlib.pyplot as plt
 from datetime import datetime
-import matplotlib
-matplotlib.use('Agg')
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASIS_URL = "https://api.luchtmeetnet.nl/open_api"
 
@@ -32,22 +31,28 @@ def haal_stations_op():
         print(f"Error: {response.status_code}")
         return None
 
+def verzamel_metingen_voor_station(station, startdatum, einddatum):
+    station_nummer = station['number']
+    return haal_fijnstofmetingen_op(station_nummer, startdatum, einddatum)
+
 def verzamel_alle_metingen(startdatum, einddatum):
     stations = haal_stations_op()
     alle_pm10_metingen = []
     alle_pm25_metingen = []
     
     if stations:
-        for station in stations['data']:
-            station_nummer = station['number']
-            pm10_metingen, pm25_metingen = haal_fijnstofmetingen_op(station_nummer, startdatum, einddatum)
-            if pm10_metingen:
-                alle_pm10_metingen.extend(pm10_metingen)
-            if pm25_metingen:
-                alle_pm25_metingen.extend(pm25_metingen)
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(verzamel_metingen_voor_station, station, startdatum, einddatum) for station in stations['data']]
+            for future in as_completed(futures):
+                pm10_metingen, pm25_metingen = future.result()
+                if pm10_metingen:
+                    alle_pm10_metingen.extend(pm10_metingen)
+                if pm25_metingen:
+                    alle_pm25_metingen.extend(pm25_metingen)
+                    
     return alle_pm10_metingen, alle_pm25_metingen
 
-def maak_grafiek(metingen, stof_type):
+def maak_grafiek(metingen, stof_type, bestand_naam):
     tijden = [datetime.strptime(m['timestamp_measured'], '%Y-%m-%dT%H:%M:%S%z') for m in metingen]
     waarden = [m['value'] for m in metingen]
     
@@ -58,17 +63,16 @@ def maak_grafiek(metingen, stof_type):
     plt.title(f'{stof_type} Concentratie over Tijd')
     plt.legend()
     plt.grid(True)
-    
-    plt.savefig(f'{stof_type}_concentratie.png')
-    print(f'Plot saved as {stof_type}_concentratie.png')
+    plt.savefig(bestand_naam)
+    plt.close()
 
 if __name__ == "__main__":
-    startdatum = "2023-05-15"
-    einddatum = "2023-05-15"
+    startdatum = "2023-05-01"
+    einddatum = "2023-05-07"
     
     alle_pm10_metingen, alle_pm25_metingen = verzamel_alle_metingen(startdatum, einddatum)
     
     if alle_pm10_metingen:
-        maak_grafiek(alle_pm10_metingen, 'PM10')
+        maak_grafiek(alle_pm10_metingen, 'PM10', 'PM10_concentratie.png')
     if alle_pm25_metingen:
-        maak_grafiek(alle_pm25_metingen, 'PM2.5')
+        maak_grafiek(alle_pm25_metingen, 'PM2.5', 'PM25_concentratie.png')
